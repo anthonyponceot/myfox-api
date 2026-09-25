@@ -1,14 +1,12 @@
 import logging
-from dataclasses import field
 from typing import Any
 import voluptuous as vol
 from collections.abc import Mapping
 
-from homeassistant.config_entries import ConfigEntry, OptionsFlow, SOURCE_REAUTH, ConfigFlowResult
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow, SOURCE_REAUTH, ConfigFlowResult
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 from homeassistant.core import callback
-from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.selector import (
     TextSelector,
     TextSelectorConfig,
@@ -26,6 +24,11 @@ from .api.const import (KEY_SITE_ID,
                         KEY_REFRESH_TOKEN,
                         KEY_EXPIRE_IN,
                         KEY_EXPIRE_AT,
+                        KEY_CLIENT_ID,
+                        KEY_CLIENT_SECRET,
+                        KEY_MYFOX_USER,
+                        KEY_MYFOX_PSWD,
+                        KEY_AUTH_IMPLEMENTATION,
                         KEY_CACHE_EXPIRE_IN,
                         CACHE_EXPIRE_IN,
                         POOLING_INTERVAL_DEF,
@@ -40,6 +43,7 @@ from .api.const import (KEY_SITE_ID,
                         KEY_NB_RETRY_CAMERA,
                         KEY_DELAY_BETWEEN_RETRY
                         )
+from .api.myfoxapi_exception import (InvalidTokenMyFoxException, MyFoxException)
 
 from .api import (
     MyFoxEntryDataApi,
@@ -158,145 +162,141 @@ class MyFoxOptionsFlowHandler(OptionsFlow):
         )
 
 
-class MyFoxConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domain=DOMAIN_MYFOX):
-    """ Config """
+class MyFoxConfigFlow(ConfigFlow, domain=DOMAIN_MYFOX):
+    """Config flow based on client id, client secret, MyFox user and password."""
     DOMAIN = DOMAIN_MYFOX
     VERSION = CONFIG_VERSION
 
-    # Init des variables locales
     def __init__(self) -> None:
-        self.myfox_client: MyFoxApiClient = None
+        self.myfox_client: MyFoxApiClient | None = None
         self.siteId = None
-        self.site: MyFoxSite = None
-        self.sites: list[MyFoxSite] = field(default_factory=list[MyFoxSite])
-
-        self.access_token = None
-        self.refresh_token = None
-
-        self.config_entry: ConfigEntry | None = None
+        self.site: MyFoxSite | None = None
+        self.sites: list[MyFoxSite] = []
         self.data: dict[str, Any] | None = None
+        self._reauth_entry: ConfigEntry | None = None
 
-    @property
-    def logger(self) -> logging.Logger:
-        """Return logger."""
-        return _LOGGER
+    def _credential_schema(self) -> vol.Schema:
+        """Formulaire CLIENT_ID, CLIENT_SECRET, MYFOX_USER, MYFOX_PSWD."""
+        data = self.data or {}
+        return vol.Schema(
+            {
+                vol.Required(KEY_CLIENT_ID, default=data.get(KEY_CLIENT_ID, "")): str,
+                vol.Required(KEY_CLIENT_SECRET, default=data.get(KEY_CLIENT_SECRET, "")): TextSelector(
+                    TextSelectorConfig(type=TextSelectorType.PASSWORD)
+                ),
+                vol.Required(KEY_MYFOX_USER, default=data.get(KEY_MYFOX_USER, "")): str,
+                vol.Required(KEY_MYFOX_PSWD, default=data.get(KEY_MYFOX_PSWD, "")): TextSelector(
+                    TextSelectorConfig(type=TextSelectorType.PASSWORD)
+                ),
+            }
+        )
 
-    # Step pour relancer la conf
+    def _store_login(self, user_input: dict[str, Any]) -> None:
+        """Enregistre les identifiants et les tokens obtenus via grant password."""
+        info = self.myfox_client.myfox_info
+        self.data = {
+            KEY_CLIENT_ID: user_input[KEY_CLIENT_ID],
+            KEY_CLIENT_SECRET: user_input[KEY_CLIENT_SECRET],
+            KEY_MYFOX_USER: user_input[KEY_MYFOX_USER],
+            KEY_MYFOX_PSWD: user_input[KEY_MYFOX_PSWD],
+            KEY_TOKEN: {
+                KEY_ACCESS_TOKEN: info.access_token,
+                KEY_REFRESH_TOKEN: info.refresh_token,
+                KEY_EXPIRE_IN: info.expires_in,
+                KEY_EXPIRE_AT: info.expires_time,
+                "token_type": "Bearer",
+            },
+        }
+        if self.siteId is not None:
+            self.data[KEY_SITE_ID] = self.siteId
+        self.sites = info.sites
+
+    async def _async_login(self, user_input: dict[str, Any]) -> str | None:
+        """Authentification password grant. Retourne une clef d'erreur ou None."""
+        myfox_info = MyFoxEntryDataApi(
+            client_id=user_input[KEY_CLIENT_ID],
+            client_secret=user_input[KEY_CLIENT_SECRET],
+            username=user_input[KEY_MYFOX_USER],
+            password=user_input[KEY_MYFOX_PSWD],
+        )
+        options = MyFoxOptionsDataApi()
+        options.cache_time = CACHE_EXPIRE_IN
+        myfox_info.options = options
+        self.myfox_client = MyFoxApiClient(myfox_info)
+        try:
+            login_ok = await self.myfox_client.login()
+        except InvalidTokenMyFoxException:
+            return "invalid_auth"
+        except MyFoxException:
+            _LOGGER.exception("Connexion MyFox impossible")
+            return "cannot_connect"
+        except Exception:
+            _LOGGER.exception("Erreur inattendue pendant la connexion MyFox")
+            return "unknown"
+        if not login_ok:
+            return "invalid_auth"
+        if not self.myfox_client.myfox_info.sites:
+            return "no_site"
+        self._store_login(user_input)
+        return None
+
     async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None):
-        if "entry_id" in self.context and self.context["entry_id"] :
-            unique_id = self.context["entry_id"]
-            _LOGGER.debug("Entry trouvee : %s", unique_id)
-            existing_entry = self.hass.config_entries.async_get_entry(unique_id)
-            if existing_entry:
+        """Reconfigure an existing entry with the password grant."""
+        if "entry_id" in self.context and self.context["entry_id"]:
+            existing_entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+            if existing_entry and self.data is None:
                 self.data = existing_entry.data.copy()
-                if KEY_TOKEN in self.data:
-                    if KEY_ACCESS_TOKEN in self.data[KEY_TOKEN]:
-                        self.access_token = self.data[KEY_TOKEN][KEY_ACCESS_TOKEN]
-                    if KEY_REFRESH_TOKEN in self.data[KEY_TOKEN]:
-                        self.refresh_token = self.data[KEY_TOKEN][KEY_REFRESH_TOKEN]
                 if KEY_SITE_ID in self.data:
                     self.siteId = self.data[KEY_SITE_ID]
-            if self.data is None:
-                self.data = dict[str, Any]()
-            if user_input is not None:
-                self.data.update(user_input)
-        else :
-            _LOGGER.debug("Entry non trouvee dans le context [%s]", str(self.context))
+        if self.data is None:
+            self.data = {}
         return await self.async_step_user()
 
-    # 1er step authent
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Handle a flow start."""
-        if self.data is None:
-            self.data = dict[str, Any]()
+        """Collect CLIENT_ID, CLIENT_SECRET, MYFOX_USER and MYFOX_PSWD."""
+        errors: dict[str, str] = {}
         if user_input is not None:
-            self.data.update(user_input)
+            error = await self._async_login(user_input)
+            if error is None:
+                if self.source == SOURCE_REAUTH and self._reauth_entry is not None:
+                    data = self._reauth_entry.data.copy()
+                    data.update(self.data)
+                    data.pop(KEY_AUTH_IMPLEMENTATION, None)
+                    return self.async_update_reload_and_abort(
+                        self._reauth_entry,
+                        data=data,
+                    )
+                return await self.async_step_select_site()
+            errors["base"] = error
 
-        return await super().async_step_user()
+        return self.async_show_form(
+            step_id="user",
+            data_schema=self._credential_schema(),
+            errors=errors,
+        )
 
     async def async_step_reauth(
         self, entry_data: Mapping[str, Any]
     ) -> ConfigFlowResult:
-        """Perform reauth upon an API authentication error."""
-        _LOGGER.debug("async_step_reauth :  %s", str(entry_data))
-        if KEY_SITE_ID in entry_data :
+        """Ask again for the four credentials after an authentication error."""
+        if KEY_SITE_ID in entry_data:
             self.siteId = entry_data[KEY_SITE_ID]
+        self.data = dict(entry_data)
+        if "entry_id" in self.context and self.context["entry_id"]:
+            self._reauth_entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Confirm reauth dialog."""
-        _LOGGER.debug("async_step_reauth_confirm :  %s", str(user_input))
-
         if user_input is None:
             return self.async_show_form(
                 step_id="reauth_confirm",
                 description_placeholders={"name": "MyFox"},
             )
-        return await self.async_step_user()
-
-    # 1er step config
-    async def async_oauth_create_entry(self, info: dict[str, Any] | None = None):
-        _LOGGER.debug("async_oauth_create_entry :  %s", str(info))
-        if self.source == SOURCE_REAUTH:
-            if self.siteId is not None:
-                device_unique_id = PREFIX_ENTRY + str(self.siteId)
-                existing_entry = await self.async_set_unique_id(device_unique_id)
-                data = existing_entry.data.copy()
-                data.update(info)
-                _LOGGER.debug("Reload conf via siteId :  %s", str(device_unique_id))
-                return self.async_update_reload_and_abort(
-                    existing_entry,
-                    data=data,
-                )
-            elif "entry_id" in self.context and self.context["entry_id"] :
-                device_unique_id = self.context["entry_id"]
-                existing_entry = await self.async_set_unique_id(device_unique_id)
-                data = existing_entry.data.copy()
-                data.update(info)
-                _LOGGER.debug("Reload conf via context :  %s", str(device_unique_id))
-                return self.async_update_reload_and_abort(
-                    existing_entry,
-                    data=data,
-                )
-            _LOGGER.debug("Poursuite reauth car entry non trouve")
-        if info is not None:
-            myfox_info = MyFoxEntryDataApi()
-            # anciens tokens
-            if self.access_token :
-                myfox_info.access_token = self.access_token
-            if self.refresh_token :
-                myfox_info.refresh_token = self.refresh_token
-            # nouveaux token
-            if KEY_TOKEN in info:
-                if KEY_ACCESS_TOKEN in info[KEY_TOKEN] :
-                    myfox_info.access_token = info[KEY_TOKEN][KEY_ACCESS_TOKEN]
-                if KEY_REFRESH_TOKEN in info[KEY_TOKEN] :
-                    myfox_info.refresh_token = info[KEY_TOKEN][KEY_REFRESH_TOKEN]
-                if KEY_EXPIRE_IN in info[KEY_TOKEN] :
-                    myfox_info.expires_in = info[KEY_TOKEN][KEY_EXPIRE_IN]
-                if KEY_EXPIRE_AT in info[KEY_TOKEN] :
-                    myfox_info.expires_time = info[KEY_TOKEN][KEY_EXPIRE_AT]
-
-            options = MyFoxOptionsDataApi()
-            options.cache_time = CACHE_EXPIRE_IN
-            myfox_info.options = options
-            self.myfox_client = MyFoxApiClient(myfox_info)
-            if self.myfox_client.getExpireDelay() > 0 :
-                await self.myfox_client.getInfoSites()
-                """Recherche des sites."""
-                self.sites = self.myfox_client.myfox_info.sites
-            else :
-                login_ok = await self.myfox_client.refreshToken()
-                if login_ok :
-                    """Recherche des sites."""
-                    self.sites = self.myfox_client.myfox_info.sites
-            self.data.update(info)
-            return await self.async_step_select_site()
-
         return await self.async_step_user()
 
     # Step de selection du site

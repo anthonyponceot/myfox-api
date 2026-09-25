@@ -17,15 +17,19 @@ Récupère l'ensemble des items dispo via les API MyFox et ajoute les "appareils
 ## Installation
 
 ### Création d'un compte sur myfox.me
-Rendez-vous sur https://api.myfox.me/dev/apps et créer un accès de type "Commercial applications"
+Rendez-vous sur https://api.myfox.me/dev/apps et créer un accès de type "Personal application"
 - Name : MyFox Home Assistant
 - Description : Home Assistant to control MyFox via API
-- Redirect URL	: https://my.home-assistant.io/redirect/oauth
 
-L'accès via "Personal application" n'est plus disponible pour cette intégration car imposait de stocker les accès en plus des tokens.
-L'utilisation du token "Personal application" reste disponible pour le moment pour les tests unitaires.
+L'installation dans Home Assistant demande ensuite les quatre valeurs de cette application et du compte MyFox :
+- `CLIENT_ID` : identifiant de l'application
+- `CLIENT_SECRET` : secret de l'application
+- `MYFOX_USER` : email du compte MyFox
+- `MYFOX_PSWD` : mot de passe du compte MyFox
 
-#### Interface myfoxapi : Bien utiliser les identifiants "Commercial applications"
+L'intégration se connecte avec ces identifiants (grant `password`), récupère les tokens, puis demande le site à utiliser.
+
+#### Interface myfoxapi : utiliser les identifiants "Personal application"
 ![myfox](./docs/img/myfoxapi.png)
 
 ### Installation de l'intégration
@@ -44,7 +48,7 @@ Une fois installé, ajouter via les intégrations -> MyFox.
 
 Ou bien cliquez sur le lien [![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=myfox)
 
-Le déclenchement de l'installation ou la demande d'ajout d'une nouvelle entrée débranchera vers la page d'autorisation d'ouverture de l'API [API MyFox](https://api.myfox.me/). Les appareils et entités seront ensuite automatiquement récupérés et disponibles dans HomeAssistant.
+Le formulaire demande `CLIENT_ID`, `CLIENT_SECRET`, `MYFOX_USER` et `MYFOX_PSWD`. Après connexion, choisissez le site. Les appareils et entités sont ensuite récupérés automatiquement.
 
 Les différents types d'appareils disponibles : [Integrations MyFox](docs/integration.md)
 
@@ -352,8 +356,9 @@ La suppression se fait donc via le paramétrage des intégrations, puis Supprime
 
 ### Suppression des tokens
 
-Depuis l'écran des intégrations, rendez vous sur sur les "..." en haut à droite, puis "Informations d'identification de l'applications".
-S'il reste une clef commençant par "MyFox", vous pouvez la supprimer
+Les identifiants (`CLIENT_ID`, `CLIENT_SECRET`, `MYFOX_USER`, `MYFOX_PSWD`) et les tokens sont stockés dans l'entrée de configuration. La suppression de l'intégration les retire.
+
+Si une ancienne installation OAuth a encore une clef "MyFox" dans Informations d'identification de l'application, vous pouvez aussi la supprimer.
 
 ### Suppression des autorisations sur l'api myfox
 

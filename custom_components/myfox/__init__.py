@@ -104,14 +104,27 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
             new_data.pop(KEY_REFRESH_TOKEN, "")
             new_data.pop(KEY_EXPIRE_IN, "")
             new_data.pop(KEY_EXPIRE_TIME, "")
-            new_data.pop(KEY_CLIENT_ID, "")
-            new_data.pop(KEY_CLIENT_SECRET, "")
-            new_data.pop(KEY_MYFOX_USER, "")
-            new_data.pop(KEY_MYFOX_PSWD, "")
 
         hass.config_entries.async_update_entry(config_entry, data=new_data, options=new_options, version=CONFIG_VERSION)
         _LOGGER.info("Migration from version %s to version %s successful", old_version, CONFIG_VERSION)
     return True
+
+
+def entry_credentials(hass: HomeAssistant, entry: ConfigEntry) -> tuple[str | None, str | None, str | None, str | None]:
+    """CLIENT_ID, CLIENT_SECRET, MYFOX_USER and MYFOX_PSWD stored on the entry.
+
+    Existing OAuth entries keep client id and secret in application credentials.
+    """
+    client_id = entry.data.get(KEY_CLIENT_ID)
+    client_secret = entry.data.get(KEY_CLIENT_SECRET)
+    username = entry.data.get(KEY_MYFOX_USER)
+    password = entry.data.get(KEY_MYFOX_PSWD)
+    if not client_id or not client_secret:
+        credential = getClientCredential(hass, entry)
+        if credential:
+            client_id = client_id or credential.client_id
+            client_secret = client_secret or credential.client_secret
+    return client_id, client_secret, username, password
 
 
 def getClientCredential(hass: HomeAssistant, entry: ConfigEntry) -> ClientCredential :
@@ -183,20 +196,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     if DOMAIN_MYFOX not in hass.data:
         hass.data.setdefault(MYFOX_KEY, {})
 
-    client_id = None
-    if KEY_CLIENT_ID in entry.data :
-        client_id = entry.data[KEY_CLIENT_ID]
-    client_secret = None
-    if KEY_CLIENT_SECRET in entry.data :
-        client_secret = entry.data[KEY_CLIENT_SECRET]
-
-    credential: ClientCredential = getClientCredential(hass, entry)
-    if credential :
-        client_id = credential.client_id
-        client_secret = credential.client_secret
+    client_id, client_secret, username, password = entry_credentials(hass, entry)
 
     myfox_info = MyFoxEntryDataApi(client_id=client_id,
                                    client_secret=client_secret,
+                                   username=username,
+                                   password=password,
                                    access_token=entry.data[KEY_TOKEN][KEY_ACCESS_TOKEN],
                                    refresh_token=entry.data[KEY_TOKEN][KEY_REFRESH_TOKEN],
                                    expires_in=entry.data[KEY_TOKEN][KEY_EXPIRE_IN],
@@ -270,6 +275,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         await coordinator.async_config_entry_first_refresh()
 
         new_data = {**entry.data}
+        if client_id and KEY_CLIENT_ID not in new_data:
+            new_data[KEY_CLIENT_ID] = client_id
+        if client_secret and KEY_CLIENT_SECRET not in new_data:
+            new_data[KEY_CLIENT_SECRET] = client_secret
 
         hass.config_entries.async_update_entry(entry, data=new_data, options=entry.options)
         await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)
@@ -430,11 +439,13 @@ async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> Non
     coordinator: MyFoxCoordinator = hass.data.setdefault(MYFOX_KEY, {})[config_entry.entry_id]
     new_data = {**config_entry.data}
 
-    credential: ClientCredential = getClientCredential(hass, config_entry)
-    if credential and coordinator :
+    client_id, client_secret, username, password = entry_credentials(hass, config_entry)
+    if coordinator and (client_id or username) :
         myfox_info: MyFoxEntryDataApi = coordinator.getMyFoxInfo()
-        myfox_info.client_id = credential.client_id
-        myfox_info.client_secret = credential.client_secret
+        myfox_info.client_id = client_id
+        myfox_info.client_secret = client_secret
+        myfox_info.username = username
+        myfox_info.password = password
 
         # mise a jour des options
         myfox_info.options = updateMyFoxOptions(config_entry)

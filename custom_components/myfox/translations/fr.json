@@ -3,16 +3,36 @@
   "config": {
     "step": {
       "user": {
+        "title": "Compte MyFox",
+        "description": "Créez une application Personnelle sur https://api.myfox.me/dev/apps, puis renseignez CLIENT_ID, CLIENT_SECRET, l'email MyFox (MYFOX_USER) et le mot de passe MyFox (MYFOX_PSWD).",
         "data": {
           "client_id": "Client ID",
           "client_secret": "Client Secret",
-          "access_token" : "Token d'accès",
-          "refresh_token" : "Token de refresh"
+          "username": "Email MyFox (MYFOX_USER)",
+          "password": "Mot de passe MyFox (MYFOX_PSWD)"
         }
+      },
+      "select_site": {
+        "title": "Choisir un site",
+        "data": {
+          "site_id": "Site"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reconnecter MyFox",
+        "description": "La connexion MyFox pour {name} a expiré. Saisissez à nouveau CLIENT_ID, CLIENT_SECRET, MYFOX_USER et MYFOX_PSWD."
       }
     },
+    "error": {
+      "invalid_auth": "Client id, client secret, email ou mot de passe MyFox invalide.",
+      "cannot_connect": "Impossible de joindre l'API MyFox.",
+      "no_site": "Aucun site trouvé pour ce compte MyFox.",
+      "unknown": "Erreur inattendue pendant la connexion à MyFox."
+    },
     "abort": {
-      "already_configured": "Alarme déjà configurée"
+      "already_configured": "Alarme déjà configurée",
+      "reauth_successful": "Compte MyFox reconnecté.",
+      "updated_successfully": "Configuration mise à jour."
     }
   },
   "options": {
@@ -21,13 +41,13 @@
         "data": {
           "pool_interval_minutes": "Fréquence de pooling (en minutes)",
           "cache_expires_in": "Durée du cache (en secondees)",
-          "cache_security" : "Durée du cache de l'alarme (en secondes)",
+          "cache_security": "Durée du cache de l'alarme (en secondes)",
           "cache_camera": "Durée du cache de la camera (en secondes)",
           "nb_retry_default": "Nombre de relance (defaut)",
           "nb_retry_camera": "Nombre de relance (Camera)",
-          "delay_between_retry" : "Délai entre deux essais (en secondes)",
+          "delay_between_retry": "Délai entre deux essais (en secondes)",
           "utilisation_code": "Utilisation d'un code pour l'alarme",
-          "autorisation_codes" : "Codes autorisés (séparés par des espaces et necommençant pas par 0)"
+          "autorisation_codes": "Codes autorisés (séparés par des espaces et necommençant pas par 0)"
         }
       }
     }
