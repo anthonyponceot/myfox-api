@@ -183,18 +183,19 @@ Les différents types d'appareils disponibles : [Integrations MyFox](docs/integr
 - Bouton action 2
 
 </p></details>
-<details><summary> Gestion des volets <i>(3 services sur 4, buttons:2)</i> </summary>
+<details><summary> Gestion des volets <i>(4 services sur 4, buttons:3)</i> </summary>
 <p>
 
 *Services*
 - /site/{siteId}/device/shutter/items : listing des modules volets
 - /site/{siteId}/device/{deviceId}/shutter/open : volet en position ouverte
 - /site/{siteId}/device/{deviceId}/shutter/close : volet en position fermée
-- _(not implemented)_ /site/{siteId}/device/{deviceId}/shutter/my : volet en position "favoris"
+- /site/{siteId}/device/{deviceId}/shutter/my : volet en position "favoris" (arrêt si le volet est en mouvement)
 
 *Buttons*
 - Ouverture volet
 - Fermeture volet
+- Favorite volet
 
 </p></details>
 <details><summary> Gestion des groupes de volets <i>(3 services sur 3, buttons:2)</i> </summary>
